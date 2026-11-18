@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
@@ -280,6 +280,22 @@
   .roomline b{font-family:var(--mono);color:var(--ink);letter-spacing:.06em}
   .roomline.none{color:var(--accent);background:var(--accent-soft);border-color:var(--accent-soft)}
 
+  /* 我加入过的房间 */
+  .myrooms{margin-top:18px;padding-top:16px;border-top:1px solid var(--line2);display:none}
+  .myrooms.show{display:block}
+  .myrooms-list{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+  .rchip{
+    display:inline-flex;align-items:center;gap:7px;border:1px solid var(--line);border-radius:999px;
+    padding:4px 4px 4px 12px;background:#FDFCFA;font-size:12.5px;cursor:pointer;transition:border-color .12s
+  }
+  .rchip:hover{border-color:var(--ink4);background:#fff}
+  .rchip b{font-family:var(--mono);font-weight:600;letter-spacing:.04em}
+  .rchip .nm{color:var(--ink2);max-width:7em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .rchip .x{border:0;background:none;color:var(--ink4);cursor:pointer;font:inherit;font-size:15px;line-height:1;padding:0 5px;border-radius:6px}
+  .rchip .x:hover{color:var(--accent);background:var(--accent-soft)}
+  .myrooms .clr{margin-top:10px;font-size:12px;color:var(--ink3);background:none;border:0;padding:0;cursor:pointer;text-decoration:underline}
+  .myrooms .clr:hover{color:var(--accent)}
+
   /* ---------- 已登录的人 ---------- */
   .presence{margin-bottom:18px}
   .presence-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin-bottom:12px;flex-wrap:wrap}
@@ -376,6 +392,7 @@
       <span id="rbOnline">0 人在线</span>
       <button id="rbInvite">复制邀请链接</button>
       <button id="rbRename">改我的昵称</button>
+      <button id="rbLeave">退出房间</button>
     </div>
   </header>
 
@@ -385,7 +402,7 @@
       <h1>第一次来，先认个脸</h1>
       <p>昵称用来区分彼此，<b>身份码是自己设的简单密码</b>；同一个昵称必须同码。</p>
 
-      <div class="roomline" id="loginRoomLine"><span id="loginRoomLabel">房间</span><b id="loginRoomId">—</b></div>
+      <div class="roomline" id="loginRoomLine" style="display:none"><span id="loginRoomLabel">房间</span><b id="loginRoomId">—</b></div>
 
       <div class="field">
         <div class="lbl">昵称 <em>*</em></div>
@@ -395,6 +412,10 @@
         <div class="lbl">身份码 <em>*</em> <span class="hint">自己的简单密码，记牢</span></div>
         <input type="text" id="loginCode" maxlength="12" placeholder="4~12 位字母或数字" autocomplete="off" spellcheck="false">
       </div>
+      <div class="field">
+        <div class="lbl">房间号 <span class="hint">邀请链接里 ?r= 后面那段，填了就能进别人的房间</span></div>
+        <input type="text" id="loginRoom" maxlength="12" placeholder="6 位字母数字，留空则新建一个" autocomplete="off" spellcheck="false">
+      </div>
       <div class="err" id="loginErr"></div>
 
       <div class="btnrow" id="loginGoRow">
@@ -402,6 +423,11 @@
       </div>
       <div class="btnrow" id="loginCreateRow">
         <button class="ghost wide" id="loginCreate">创建一个房间</button>
+      </div>
+
+      <div class="myrooms" id="myRooms">
+        <div class="lbl">我加入过的房间 <span class="hint">点一下就进去，不用再输身份码</span></div>
+        <div class="myrooms-list" id="myRoomsList"></div>
       </div>
 
       <div class="tiny login-tip">
@@ -1559,6 +1585,7 @@ function computeStats(members) {
     R.meId = meId;
     R.meName = meName;
     try { localStorage.setItem(TK + R.room, token); } catch (e) { }
+    rememberRoom(R.room, meName);
     document.body.classList.remove('loggedout');
     document.body.classList.add('inroom');
     $('roomBar').classList.add('show');
@@ -1580,36 +1607,60 @@ function computeStats(members) {
     showLogin('身份已失效，请重新进入房间');
   }
 
+  /* ---------- 我加入过的房间（只记在本机） ---------- */
+  var MK = 'wtdoyo.myrooms';
+  function loadMyRooms() {
+    try {
+      var arr = JSON.parse(localStorage.getItem(MK) || '[]');
+      return Array.isArray(arr) ? arr.filter(function (r) { return r && r.id; }) : [];
+    } catch (e) { return []; }
+  }
+  function saveMyRooms(list) { try { localStorage.setItem(MK, JSON.stringify(list.slice(0, 12))); } catch (e) { } }
+  function rememberRoom(room, name) {
+    var list = loadMyRooms().filter(function (r) { return r.id !== room; });
+    list.unshift({ id: room, name: name || '', ts: Date.now() });
+    saveMyRooms(list);
+  }
+  function forgetRoom(room) {
+    saveMyRooms(loadMyRooms().filter(function (r) { return r.id !== room; }));
+    try { localStorage.removeItem(TK + room); } catch (e) { }
+  }
+  function renderMyRooms() {
+    var list = loadMyRooms(), box = $('myRooms');
+    if (!list.length) { box.classList.remove('show'); $('myRoomsList').innerHTML = ''; return; }
+    box.classList.add('show');
+    $('myRoomsList').innerHTML = list.map(function (r) {
+      return '<span class="rchip" data-room="' + esc(r.id) + '">' +
+        '<b>' + esc(r.id) + '</b>' + (r.name ? '<span class="nm">' + esc(r.name) + '</span>' : '') +
+        '<button class="x" data-forget="' + esc(r.id) + '" title="从列表里移除">×</button></span>';
+    }).join('') + '<button class="clr" id="myRoomsClear">退出全部房间</button>';
+  }
+
   function updateLoginUI() {
-    var line = $('loginRoomLine'), idEl = $('loginRoomId'), label = $('loginRoomLabel');
+    var room = ($('loginRoom').value || '').trim().toLowerCase();
+    var valid = /^[a-z0-9]{4,12}$/.test(room);
     var go = $('loginGo'), goRow = $('loginGoRow'), create = $('loginCreate');
-    if (R.room) {
-      // 已经有房间：主按钮是「进入房间」，新建退成次要按钮
-      line.classList.remove('none');
-      label.textContent = '房间';
-      idEl.textContent = R.room;
+    if (valid) {
       goRow.style.display = '';
       go.disabled = false;
       go.textContent = '进入房间';
       create.textContent = '已有房间，确认要新建？';
       create.className = 'ghost wide';
     } else {
-      // 没有房间：只留一个「创建一个房间」，不给第二个容易误解的按钮
-      line.classList.add('none');
-      label.textContent = '还没有房间';
-      idEl.textContent = '';
       goRow.style.display = 'none';
       create.textContent = '创建一个房间';
       create.className = 'primary wide';
     }
+    renderMyRooms();
   }
 
   function doLogin() {
     var name = $('loginName').value.trim();
     var code = $('loginCode').value.trim();
+    var room = ($('loginRoom').value || '').trim().toLowerCase();
     var err = $('loginErr');
     err.textContent = '';
-    if (!R.room) { err.textContent = '还没有房间，点下面的「帮我建一个」'; return; }
+    if (!/^[a-z0-9]{4,12}$/.test(room)) { err.textContent = '先填房间号，或者点下面的「创建一个房间」'; $('loginRoom').focus(); return; }
     if (!name) { err.textContent = '先填个昵称'; $('loginName').focus(); return; }
     if (!/^[A-Za-z0-9]{4,12}$/.test(code)) { err.textContent = '身份码要 4~12 位字母或数字'; $('loginCode').focus(); return; }
 
@@ -1617,14 +1668,16 @@ function computeStats(members) {
     if (btn.disabled) return;
     btn.disabled = true;
 
-    api('POST', '/api/room/' + R.room + '/join', { name: name, code: code }).then(function (jr) {
+    api('POST', '/api/room/' + room + '/join', { name: name, code: code }).then(function (jr) {
       btn.disabled = false;
       if (!jr.ok) {
-        if (jr.status === 403) err.textContent = '身份码不对，或者这个昵称已经被别人用了';
+        if (jr.status === 404) err.textContent = '没找到这个房间，检查一下房间号';
+        else if (jr.status === 403) err.textContent = '身份码不对，或者这个昵称已经被别人用了';
         else if (jr.status === 429) err.textContent = '身份码试错太多次，过几分钟再试';
         else err.textContent = jr.data.error || '进不去，再试一次';
         return;
       }
+      R.room = room;
       enterRoom(jr.data.room, jr.data.memberId, name, jr.data.token);
       toast(jr.data.isNew ? '进来了，你的改动会实时同步给所有人' : '欢迎回来');
     }).catch(function () {
@@ -1636,18 +1689,21 @@ function computeStats(members) {
   function doCreate() {
     var btn = $('loginCreate');
     if (btn.disabled) return;
-    if (R.room && !confirm('当前链接里已经有房间 ' + R.room + '。\n确定要再新建一个房间吗？新建后地址会换成新房间。')) return;
+    var typed = ($('loginRoom').value || '').trim().toLowerCase();
+    if (/^[a-z0-9]{4,12}$/.test(typed) && !confirm('现在填着房间 ' + typed + '。\n确定要再新建一个房间吗？新建后地址会换成新房间。')) return;
     btn.disabled = true;
     api('POST', '/api/room', {}).then(function (res) {
       btn.disabled = false;
       if (!res.ok) { $('loginErr').textContent = '建房失败，看看服务端日志'; return; }
-      R.room = res.data.room.id;
+      var id = res.data.room.id;
+      R.room = id;
+      $('loginRoom').value = id;
       var u = new URL(location.href);
-      u.searchParams.set('r', R.room);
+      u.searchParams.set('r', id);
       try { history.replaceState(null, '', u.toString()); } catch (e) { }
       updateLoginUI();
       $('loginErr').textContent = '';
-      toast('房间 ' + R.room + ' 建好了，设个昵称和身份码');
+      toast('房间 ' + id + ' 建好了，设个昵称和身份码');
       var name = $('loginName').value.trim();
       var code = $('loginCode').value.trim();
       if (name && /^[A-Za-z0-9]{4,12}$/.test(code)) doLogin();
@@ -1656,20 +1712,66 @@ function computeStats(members) {
     }).catch(function () { btn.disabled = false; $('loginErr').textContent = '连不上服务器'; });
   }
 
+  /* 从「我加入过的房间」直接进：有 token 就不用再输身份码 */
+  function resumeRoom(room) {
+    var token = null;
+    try { token = localStorage.getItem(TK + room); } catch (e) { }
+    $('loginErr').textContent = '';
+    if (!token) {
+      $('loginRoom').value = room;
+      updateLoginUI();
+      toast('这个房间的登录状态没了，输一次身份码再进');
+      return;
+    }
+    api('GET', '/api/room/' + room + '?token=' + encodeURIComponent(token)).then(function (res) {
+      if (res.ok && res.data.me) {
+        R.room = room;
+        enterRoom(res.data.room, res.data.me.id, res.data.me.name, token);
+        toast('欢迎回来');
+      } else {
+        try { localStorage.removeItem(TK + room); } catch (e) { }
+        $('loginRoom').value = room;
+        updateLoginUI();
+        toast(res.status === 404 ? '这个房间已经不在了' : '登录状态失效了，输一次身份码再进');
+      }
+    }).catch(function () { toast('连不上服务器，检查一下地址'); });
+  }
+
+  function leaveRoom() {
+    if (R.es) { try { R.es.close(); } catch (e) { } R.es = null; }
+    if (R.poll) { clearInterval(R.poll); R.poll = null; }
+    R.room = ''; R.token = ''; R.meId = ''; R.meName = '';
+    state.members = []; state.group = '我们的群'; state.expected = 15;
+    $('roomBar').classList.remove('show');
+    $('thoughtCard').style.display = 'none';
+    $('loginRoom').value = '';
+    $('loginName').value = '';
+    $('loginCode').value = '';
+    $('loginErr').textContent = '';
+    var u = new URL(location.href);
+    u.searchParams.delete('r');
+    try { history.replaceState(null, '', u.toString()); } catch (e) { }
+    renderAll();
+    showLogin('');
+    updateLoginUI();
+  }
+
   function tryResume(roomId) {
     var token = null;
     try { token = localStorage.getItem(TK + roomId); } catch (e) { }
     R.room = roomId;
-    if (!token) { showLogin(''); return; }
+    $('loginRoom').value = roomId;
+    if (!token) { showLogin(''); updateLoginUI(); return; }
     api('GET', '/api/room/' + roomId + '?token=' + encodeURIComponent(token)).then(function (res) {
-      if (!res.ok) { showLogin(res.status === 404 ? '没找到这个房间' : ''); return; }
+      if (!res.ok) { showLogin(res.status === 404 ? '没找到这个房间' : ''); updateLoginUI(); return; }
       if (!res.data.me) {
         try { localStorage.removeItem(TK + roomId); } catch (e) { }
         showLogin('这个房间里的身份已失效，重新输个昵称');
+        updateLoginUI();
         return;
       }
       enterRoom(res.data.room, res.data.me.id, res.data.me.name, token);
-    }).catch(function () { showLogin('连不上服务器，检查一下地址'); });
+    }).catch(function () { showLogin('连不上服务器，检查一下地址'); updateLoginUI(); });
   }
 
   /* ---------- 事件 ---------- */
@@ -1689,6 +1791,31 @@ function computeStats(members) {
     $('loginCode').addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); doLogin(); } });
     $('loginCode').addEventListener('input', function () {
       this.value = this.value.replace(/[^a-zA-Z0-9]/g, '');
+    });
+    $('loginRoom').addEventListener('input', function () {
+      this.value = this.value.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+      updateLoginUI();
+    });
+    $('loginRoom').addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); doLogin(); } });
+    $('myRoomsList').addEventListener('click', function (e) {
+      var forget = e.target.closest('[data-forget]');
+      if (forget) {
+        e.stopPropagation();
+        forgetRoom(forget.dataset.forget);
+        renderMyRooms();
+        toast('已从列表移除');
+        return;
+      }
+      if (e.target.closest('#myRoomsClear')) {
+        if (!confirm('退出全部房间？\n会清掉这台设备上所有房间的自动登录，房间里的资料还在。')) return;
+        loadMyRooms().forEach(function (r) { try { localStorage.removeItem(TK + r.id); } catch (err) { } });
+        saveMyRooms([]);
+        renderMyRooms();
+        toast('已退出全部房间');
+        return;
+      }
+      var chip = e.target.closest('[data-room]');
+      if (chip) resumeRoom(chip.dataset.room);
     });
 
     $('btnSave').addEventListener('click', function () {
@@ -1722,12 +1849,15 @@ function computeStats(members) {
       if (!confirm('退出房间？你的那条会从房间删掉。')) return;
       api('DELETE', '/api/room/' + R.room + '/member', { token: R.token }).then(function (res) {
         if (!res.ok) { toast(res.data.error || '删不掉'); return; }
-        try { localStorage.removeItem(TK + R.room); } catch (e) { }
+        forgetRoom(R.room);
         if (R.es) { try { R.es.close(); } catch (e) { } }
         R.token = ''; R.meId = '';
         document.body.classList.add('loggedout');
         $('roomBar').classList.remove('show');
-        showLogin('已退出房间');
+        $('thoughtCard').style.display = 'none';
+        $('loginRoom').value = '';
+        showLogin('已退出房间，资料也从房间里删掉了');
+        updateLoginUI();
       });
     });
 
@@ -1764,6 +1894,11 @@ function computeStats(members) {
       $('joinModal').querySelector('h3').textContent = '改个昵称';
       $('joinName').value = R.meName || '';
       setTimeout(function () { try { $('joinName').focus(); } catch (e) { } }, 60);
+    });
+    $('rbLeave').addEventListener('click', function () {
+      if (!confirm('退出房间？\n你的资料会留在房间里，下次可以从「我加入过的房间」直接进来。')) return;
+      leaveRoom();
+      toast('已退出房间');
     });
     $('joinGo').addEventListener('click', function () {
       var name = $('joinName').value.trim();
