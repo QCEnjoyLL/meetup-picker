@@ -1,8 +1,8 @@
 FROM node:24-alpine
 
-# 应用本身零第三方依赖，只需要两个文件
+# 应用本身零第三方依赖：服务端 + 主页面 + 管理页
 WORKDIR /app
-COPY server.js index.html ./
+COPY server.js index.html admin.html ./
 
 ENV NODE_ENV=production \
     PORT=8080 \
