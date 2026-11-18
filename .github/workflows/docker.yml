@@ -85,7 +85,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/qcreugpnk/meetup-picker
+          images: ghcr.io/qqreugpnk/meetup-picker
           tags: |
             type=ref,event=branch
             type=semver,pattern={{version}}

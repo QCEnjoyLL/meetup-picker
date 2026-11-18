@@ -1,4 +1,4 @@
-# 聚一聚 · 群聚会选址器
+﻿# 聚一聚 · 群聚会选址器
 
 [![build](https://github.com/QCEnjoyLL/meetup-picker/actions/workflows/docker.yml/badge.svg)](https://github.com/QCEnjoyLL/meetup-picker/actions/workflows/docker.yml)
 
@@ -31,7 +31,7 @@
 镜像由 GitHub Actions 自动构建（amd64 + arm64）：
 
 ```bash
-docker compose up -d          # 拉 ghcr.io/qcreugpnk/meetup-picker:latest
+docker compose up -d          # 拉 ghcr.io/qqreugpnk/meetup-picker:latest
 docker compose logs -f
 ```
 

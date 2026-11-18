@@ -1,7 +1,7 @@
 services:
   meetup:
     # GitHub Actions 自动构建的镜像，amd64 / arm64 都有
-    image: ghcr.io/qcreugpnk/meetup-picker:latest
+    image: ghcr.io/qqreugpnk/meetup-picker:latest
     container_name: meetup-picker
     restart: unless-stopped
     ports:
