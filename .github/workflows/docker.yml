@@ -1,0 +1,105 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # 先跑一遍接口冒烟，挂了就不出镜像
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: 语法检查
+        run: node --check server.js
+
+      - name: 接口冒烟（建房 / 身份码 / 错误码拒绝）
+        run: |
+          set -euo pipefail
+          export DB_PATH="$RUNNER_TEMP/ci.db"
+          node --disable-warning=ExperimentalWarning server.js &
+          for i in $(seq 1 40); do
+            if curl -fsS http://127.0.0.1:8080/api/ping > /dev/null 2>&1; then break; fi
+            sleep 0.5
+          done
+
+          echo "--- ping ---"
+          curl -fsS http://127.0.0.1:8080/api/ping
+          echo
+
+          ROOM=$(curl -fsS -X POST http://127.0.0.1:8080/api/room \
+            -H 'content-type: application/json' -d '{"title":"ci"}' \
+            | grep -o '"id":"[a-z0-9]*"' | head -1 | cut -d'"' -f4)
+          echo "room=$ROOM"
+
+          echo "--- 首次登录（建号）---"
+          curl -fsS -X POST "http://127.0.0.1:8080/api/room/$ROOM/join" \
+            -H 'content-type: application/json' -d '{"name":"ci","code":"ci1234"}' | tee /tmp/join.json
+          grep -q '"token"' /tmp/join.json
+
+          echo "--- 错误身份码应为 403 ---"
+          CODE=$(curl -sS -o /dev/null -w '%{http_code}' -X POST "http://127.0.0.1:8080/api/room/$ROOM/join" \
+            -H 'content-type: application/json' -d '{"name":"ci","code":"wrong1"}')
+          echo "status=$CODE"
+          test "$CODE" = "403"
+
+          echo "--- 同一身份码重登应成功 ---"
+          curl -fsS -X POST "http://127.0.0.1:8080/api/room/$ROOM/join" \
+            -H 'content-type: application/json' -d '{"name":"ci","code":"ci1234"}' | grep -q '"memberId"'
+
+          echo "全部通过"
+
+  # 构建并推送到 GitHub Container Registry
+  docker:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - name: 登录 GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 生成镜像标签
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/qcreugpnk/meetup-picker
+          tags: |
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,format=short
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: 构建并推送（amd64 + arm64）
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

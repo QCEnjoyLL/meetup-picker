@@ -1,0 +1,26 @@
+services:
+  meetup:
+    # GitHub Actions 自动构建的镜像，amd64 / arm64 都有
+    image: ghcr.io/qcreugpnk/meetup-picker:latest
+    container_name: meetup-picker
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      TZ: Asia/Shanghai
+      PORT: "8080"
+      DB_PATH: /data/meetup.db
+    volumes:
+      # SQLite 落在宿主机 ./data/meetup.db，整个目录拷走就是备份
+      - ./data:/data
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/api/ping').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"

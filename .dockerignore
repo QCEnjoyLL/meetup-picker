@@ -1,0 +1,13 @@
+data
+*.db
+*.db-wal
+*.db-shm
+*.png
+*.md
+.git
+.gitignore
+node_modules
+_*.mjs
+_ui.js
+Dockerfile
+docker-compose.yml

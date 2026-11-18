@@ -1,0 +1,13 @@
+{
+  "name": "meetup-picker",
+  "version": "1.0.0",
+  "private": true,
+  "description": "微信群聚会选址：房间实时同步、折中城市推荐、随机头像",
+  "engines": {
+    "node": ">=22.5"
+  },
+  "scripts": {
+    "start": "node --disable-warning=ExperimentalWarning server.js",
+    "dev": "node --disable-warning=ExperimentalWarning server.js"
+  }
+}

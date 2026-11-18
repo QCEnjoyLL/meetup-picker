@@ -1,0 +1,7 @@
+# 本地自己构建（不用等 CI）：
+#   docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
+services:
+  meetup:
+    build:
+      context: .
+    image: meetup-picker:local
