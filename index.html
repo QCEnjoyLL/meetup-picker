@@ -369,11 +369,11 @@
       </div>
       <div class="err" id="loginErr"></div>
 
-      <div class="btnrow">
+      <div class="btnrow" id="loginGoRow">
         <button class="primary wide" id="loginGo">进入房间</button>
       </div>
-      <div class="btnrow">
-        <button class="ghost wide" id="loginCreate">还没有房间，帮我建一个</button>
+      <div class="btnrow" id="loginCreateRow">
+        <button class="ghost wide" id="loginCreate">创建一个房间</button>
       </div>
 
       <div class="tiny login-tip">
@@ -1463,21 +1463,26 @@ function computeStats(members) {
   }
 
   function updateLoginUI() {
-    var line = $('loginRoomLine'), idEl = $('loginRoomId'), label = $('loginRoomLabel'), go = $('loginGo'), create = $('loginCreate');
+    var line = $('loginRoomLine'), idEl = $('loginRoomId'), label = $('loginRoomLabel');
+    var go = $('loginGo'), goRow = $('loginGoRow'), create = $('loginCreate');
     if (R.room) {
+      // 已经有房间：主按钮是「进入房间」，新建退成次要按钮
       line.classList.remove('none');
       label.textContent = '房间';
       idEl.textContent = R.room;
+      goRow.style.display = '';
       go.disabled = false;
       go.textContent = '进入房间';
       create.textContent = '已有房间，确认要新建？';
+      create.className = 'ghost wide';
     } else {
+      // 没有房间：只留一个「创建一个房间」，不给第二个容易误解的按钮
       line.classList.add('none');
       label.textContent = '还没有房间';
       idEl.textContent = '';
-      go.disabled = true;
-      go.textContent = '先建一个房间';
+      goRow.style.display = 'none';
       create.textContent = '创建一个房间';
+      create.className = 'primary wide';
     }
   }
 
