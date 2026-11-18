@@ -207,6 +207,16 @@
   .months .m u{text-decoration:none;font-size:10.5px;color:var(--ink3);font-family:var(--mono)}
   .months .m b{font-size:11px;font-family:var(--mono);color:var(--ink2);font-weight:600;height:14px}
 
+  /* 房间设置行 */
+  .roomrow{display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap}
+  .rf{display:flex;flex-direction:column;gap:6px;flex:1 1 200px;min-width:150px}
+  .rf > span{font-size:11.5px;color:var(--ink3);line-height:1.2;white-space:nowrap}
+  .rf input{height:40px}
+  .rf-num{flex:0 1 160px;min-width:130px}
+  .rf-btn{flex:0 0 auto;min-width:0}
+  .rf-btn button{height:40px;display:inline-flex;align-items:center;justify-content:center;padding:0 18px}
+  #metaState.dirty{color:var(--accent)}
+
   /* 城市库（可点选） */
   .lib{
     display:grid;grid-template-columns:repeat(auto-fill,minmax(262px,1fr));gap:0 26px;
@@ -609,34 +619,28 @@
   <section class="card need-room" style="margin-top:18px">
     <div class="sec-h">
       <h2>房间设置</h2>
+      <div class="note" id="metaState"></div>
     </div>
-    <div class="datagrid">
-      <div class="col">
-        <div class="field" style="width:100%">
-          <div class="lbl">群名 &amp; 预期人数</div>
-          <div class="split">
-            <div>
-              <div class="mini">群名</div>
-              <input type="text" id="fGroup" placeholder="群名" maxlength="14">
-            </div>
-            <div>
-              <div class="mini">群里一共几个人</div>
-              <input type="number" id="fExpected" min="1" max="999" placeholder="15">
-            </div>
-          </div>
-          <div class="tiny" style="margin-top:10px">
-            房间 <b id="dataRoomId" style="font-family:var(--mono);letter-spacing:.06em">—</b> · 数据存在 SQLite，清缓存不丢。
-          </div>
-        </div>
+    <div class="roomrow">
+      <label class="rf">
+        <span>群名</span>
+        <input type="text" id="fGroup" placeholder="群名" maxlength="14">
+      </label>
+      <label class="rf rf-num">
+        <span>群里一共几个人</span>
+        <input type="number" id="fExpected" min="1" max="999" placeholder="15">
+      </label>
+      <div class="rf rf-btn">
+        <span>&nbsp;</span>
+        <button class="ghost" id="btnSaveMeta">保存</button>
       </div>
-      <div class="col">
-        <div class="field" style="width:100%">
-          <div class="lbl">邀请</div>
-          <div class="btnrow">
-            <button class="primary" id="btnInviteLink">复制邀请链接</button>
-          </div>
-        </div>
+      <div class="rf rf-btn">
+        <span>邀请别人</span>
+        <button class="primary" id="btnInviteLink">复制邀请链接</button>
       </div>
+    </div>
+    <div class="tiny" style="margin-top:12px">
+      房间 <b id="dataRoomId" style="font-family:var(--mono);letter-spacing:.06em">—</b> · 数据存在 SQLite，清缓存不丢。
     </div>
   </section>
 
@@ -1592,6 +1596,8 @@ function computeStats(members) {
     $('thoughtCard').style.display = '';
     $('rbId').textContent = R.room;
     $('dataRoomId').textContent = R.room;
+    var ms = $('metaState');
+    if (ms) { ms.textContent = ''; ms.className = 'note'; }
     var u = new URL(location.href);
     u.searchParams.set('r', R.room);
     try { history.replaceState(null, '', u.toString()); } catch (e) { }
@@ -1918,17 +1924,18 @@ function computeStats(members) {
       state.group = ($('groupName').textContent || '').trim().slice(0, 14) || '我们的群';
       $('groupName').textContent = state.group;
       $('fGroup').value = state.group;
-      pushMeta();
+      markMetaDirty();
     });
     $('fGroup').addEventListener('input', function () {
       state.group = $('fGroup').value.trim().slice(0, 14) || '我们的群';
       $('groupName').textContent = state.group;
-      pushMeta();
+      markMetaDirty();
     });
     $('fExpected').addEventListener('input', function () {
       state.expected = Math.max(1, Math.min(999, Number($('fExpected').value) || 1));
-      pushMeta();
+      markMetaDirty();
     });
+    $('btnSaveMeta').addEventListener('click', saveMeta);
 
     $('thSend').addEventListener('click', sendThought);
     $('thText').addEventListener('keydown', function (e) {
@@ -1987,13 +1994,26 @@ function computeStats(members) {
     wrap.addEventListener('mouseleave', function () { tip.classList.remove('show'); });
   }
 
-  function pushMeta() {
+  function markMetaDirty() {
+    var el = $('metaState');
+    if (el) { el.textContent = '有未保存的修改'; el.className = 'note dirty'; }
+  }
+
+  function saveMeta() {
     if (!R.token) return;
-    clearTimeout(R.metaTimer);
-    R.metaTimer = setTimeout(function () {
-      api('PUT', '/api/room/' + R.room + '/meta', { token: R.token, title: state.group, expected: state.expected })
-        .then(function (res) { if (res.ok) applyRoom(res.data.room); });
-    }, 400);
+    var btn = $('btnSaveMeta');
+    if (btn.disabled) return;
+    btn.disabled = true;
+    api('PUT', '/api/room/' + R.room + '/meta', { token: R.token, title: state.group, expected: state.expected })
+      .then(function (res) {
+        btn.disabled = false;
+        if (!res.ok) { toast(res.data.error || '保存失败'); return; }
+        applyRoom(res.data.room);
+        var el = $('metaState');
+        if (el) { el.textContent = '已保存'; el.className = 'note'; }
+        toast('房间设置已保存');
+      })
+      .catch(function () { btn.disabled = false; toast('网络不给力，再试一次'); });
   }
 
   /* ---------- 启动 ---------- */
