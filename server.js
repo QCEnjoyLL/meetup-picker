@@ -13,6 +13,7 @@ const { DatabaseSync } = require('node:sqlite');
 
 const PORT = Number(process.env.PORT || 8080);
 const HOST = process.env.HOST || '0.0.0.0';
+const ADMIN_TOKEN = process.env.ADMIN_TOKEN || '';
 const ROOT = __dirname;
 const DB_PATH = process.env.DB_PATH || path.join(ROOT, 'data', 'meetup.db');
 const MAX_BODY = 256 * 1024;
@@ -63,6 +64,14 @@ db.exec(`
     ts          INTEGER NOT NULL
   );
   CREATE INDEX IF NOT EXISTS idx_thoughts_room ON thoughts(room_id, ts);
+
+  CREATE TABLE IF NOT EXISTS identities (
+    name        TEXT PRIMARY KEY,
+    pwd_salt    TEXT NOT NULL,
+    pwd_hash    TEXT NOT NULL,
+    created_at  INTEGER NOT NULL,
+    last_seen   INTEGER NOT NULL DEFAULT 0
+  );
 `);
 
 /* 兼容老库：补上身份码两列 */
@@ -70,6 +79,14 @@ db.exec(`
   const cols = db.prepare('PRAGMA table_info(members)').all().map(c => c.name);
   if (!cols.includes('pwd_salt')) db.exec("ALTER TABLE members ADD COLUMN pwd_salt TEXT NOT NULL DEFAULT ''");
   if (!cols.includes('pwd_hash')) db.exec("ALTER TABLE members ADD COLUMN pwd_hash TEXT NOT NULL DEFAULT ''");
+}
+
+/* 老库迁移：把成员上的身份码汇总成全局身份（同名取最早创建的一条） */
+{
+  const rows = db.prepare(`SELECT name, pwd_salt, pwd_hash, MIN(created_at) AS t FROM members
+    WHERE pwd_hash <> '' GROUP BY name ORDER BY t ASC`).all();
+  const ins = db.prepare('INSERT OR IGNORE INTO identities (name, pwd_salt, pwd_hash, created_at, last_seen) VALUES (?, ?, ?, ?, ?)');
+  rows.forEach(r => ins.run(r.name, r.pwd_salt, r.pwd_hash, r.t, r.t));
 }
 
 const q = {
@@ -83,6 +100,15 @@ const q = {
   members: db.prepare('SELECT * FROM members WHERE room_id = ? ORDER BY created_at ASC'),
   memberByToken: db.prepare('SELECT * FROM members WHERE token = ?'),
   memberByName: db.prepare('SELECT * FROM members WHERE room_id = ? AND name = ?'),
+  membersByName: db.prepare(`SELECT m.*, r.title AS room_title, r.updated_at AS room_updated
+    FROM members m JOIN rooms r ON r.id = m.room_id WHERE m.name = ? ORDER BY m.updated_at DESC`),
+
+  identity: db.prepare('SELECT * FROM identities WHERE name = ?'),
+  identities: db.prepare('SELECT * FROM identities ORDER BY last_seen DESC'),
+  insertIdentity: db.prepare('INSERT INTO identities (name, pwd_salt, pwd_hash, created_at, last_seen) VALUES (?, ?, ?, ?, ?)'),
+  setIdentityPwd: db.prepare('UPDATE identities SET pwd_salt = ?, pwd_hash = ? WHERE name = ?'),
+  touchIdentity: db.prepare('UPDATE identities SET last_seen = ? WHERE name = ?'),
+  deleteIdentity: db.prepare('DELETE FROM identities WHERE name = ?'),
   insertMember: db.prepare(`INSERT INTO members
     (id, room_id, token, name, city, max_hours, budget, months, dests, note, pwd_salt, pwd_hash, created_at, updated_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
@@ -259,52 +285,62 @@ function noteFail(key) {
 }
 
 /**
- * 昵称 + 身份码登录：
- *  - 昵称没见过 → 建成员，这串身份码就成为他的密码
- *  - 昵称已存在 → 必须对上身份码，否则拒绝（防止别人顶替）
+ * 昵称 + 身份码登录（身份是全局的，不按房间区分）：
+ *  - 昵称没见过 → 建身份，这串身份码成为该昵称的密码
+ *  - 昵称已存在 → 必须对上身份码，否则拒绝（换房间也一样）
  */
 function authJoin(roomId, name, code) {
   const key = attemptKey(roomId, name);
   need(!lockedOut(key), 429, '身份码错太多次了，等几分钟再试');
 
-  const exist = q.memberByName.get(roomId, name);
+  const t = now();
+  let identity = q.identity.get(name);
+
+  if (!identity) {
+    const salt = crypto.randomBytes(16).toString('hex');
+    q.insertIdentity.run(name, salt, hashPwd(code, salt), t, t);
+    identity = q.identity.get(name);
+  } else if (!identity.pwd_hash) {
+    // 老数据没有密码：第一次输入的码成为密码
+    const salt = crypto.randomBytes(16).toString('hex');
+    q.setIdentityPwd.run(salt, hashPwd(code, salt), name);
+    identity = q.identity.get(name);
+  } else if (!sameHash(hashPwd(code, identity.pwd_salt), identity.pwd_hash)) {
+    noteFail(key);
+    throw Object.assign(new Error('身份码不对'), { status: 403 });
+  }
+  attempts.delete(key);
+  q.touchIdentity.run(t, name);
+
   const token = newToken();
+  const exist = q.memberByName.get(roomId, name);
 
   if (exist) {
-    if (!exist.pwd_hash) {
-      // 老数据没有密码：第一次输入的码就是密码
-      const salt = crypto.randomBytes(16).toString('hex');
-      q.setPwd.run(salt, hashPwd(code, salt), now(), exist.id);
-    } else if (!sameHash(hashPwd(code, exist.pwd_salt), exist.pwd_hash)) {
-      noteFail(key);
-      throw Object.assign(new Error('身份码不对，或者这个昵称已经被别人用了'), { status: 403 });
-    }
-    attempts.delete(key);
-    q.setToken.run(token, now(), exist.id);
+    q.setToken.run(token, t, exist.id);
+    q.setPwd.run(identity.pwd_salt, identity.pwd_hash, t, exist.id);
     publish(roomId);
     return { token, memberId: exist.id, isNew: false };
   }
 
   const id = newId(8);
-  const salt = crypto.randomBytes(16).toString('hex');
-  const t = now();
   try {
-    q.insertMember.run(id, roomId, token, name, '', 0, 0, '[]', '[]', '', salt, hashPwd(code, salt), t, t);
+    q.insertMember.run(id, roomId, token, name, '', 0, 0, '[]', '[]', '', identity.pwd_salt, identity.pwd_hash, t, t);
   } catch (err) {
     if (/UNIQUE/i.test(String(err.message))) {
       throw Object.assign(new Error('这个昵称已经有人在用了，换一个吧'), { status: 409 });
     }
     throw err;
   }
-  attempts.delete(key);
   publish(roomId);
   return { token, memberId: id, isNew: true };
 }
 
 function updateMember(member, patch) {
   if (patch.name && patch.name !== member.name) {
-    const dup = q.memberByName.get(member.room_id, patch.name);
-    need(!dup || dup.id === member.id, 409, '这个昵称已经有人在用了');
+    need(!q.identity.get(patch.name), 409, '这个昵称已经有人在用了');
+    db.prepare('UPDATE identities SET name = ? WHERE name = ?').run(patch.name, member.name);
+    db.prepare('UPDATE members SET name = ? WHERE name = ?').run(patch.name, member.name);
+    member.name = patch.name;
   }
   const next = {
     name: patch.name !== undefined ? patch.name : member.name,
@@ -360,6 +396,82 @@ async function handleApi(req, res, url) {
 
   if (parts[1] === 'ping') {
     return send(res, 200, { ok: true, db: 'sqlite', rooms: q.roomCount.get().n, ts: now() });
+  }
+
+  /* ---------- 身份（全局，先校验再列房间） ---------- */
+  if (parts[1] === 'identity' && parts[2] === 'rooms' && method === 'POST') {
+    const body = await readBody(req);
+    const name = str(body.name, 12);
+    const code = String(body.code == null ? '' : body.code).trim();
+    need(!!name, 400, '昵称不能为空');
+    need(CODE_RE.test(code), 400, '身份码要 4~12 位字母或数字');
+    const identity = q.identity.get(name);
+    need(!!identity, 404, '没有这个身份，先用它进一次房间');
+    need(sameHash(hashPwd(code, identity.pwd_salt), identity.pwd_hash), 403, '身份码不对');
+    const rooms = q.membersByName.all(name).map(m => ({
+      id: m.room_id, title: m.room_title, city: m.city, updatedAt: m.updated_at
+    }));
+    return send(res, 200, { name, rooms });
+  }
+
+  if (parts[1] === 'identity' && parts[2] === 'leave' && method === 'POST') {
+    const body = await readBody(req);
+    const name = str(body.name, 12);
+    const code = String(body.code == null ? '' : body.code).trim();
+    const roomId = str(body.room, 16);
+    need(CODE_RE.test(code) && !!name, 400, '参数不全');
+    const identity = q.identity.get(name);
+    need(!!identity, 404, '没有这个身份');
+    need(sameHash(hashPwd(code, identity.pwd_salt), identity.pwd_hash), 403, '身份码不对');
+    const m = q.memberByName.get(roomId, name);
+    need(!!m, 404, '这个房间里没有你的资料');
+    q.deleteMember.run(m.id);
+    publish(roomId);
+    return send(res, 200, { ok: true });
+  }
+
+  /* ---------- 管理员 ---------- */
+  if (parts[1] === 'admin') {
+    const given = req.headers['x-admin-token'] || url.searchParams.get('token') || '';
+    need(!!ADMIN_TOKEN && given === ADMIN_TOKEN, 403, ADMIN_TOKEN ? '管理员口令不对' : '服务端没有设置 ADMIN_TOKEN');
+
+    if (parts[2] === 'summary' && method === 'GET') {
+      const rooms = db.prepare(`SELECT r.id, r.title, r.expected, r.created_at, r.updated_at,
+        (SELECT COUNT(*) FROM members m WHERE m.room_id = r.id) AS members
+        FROM rooms r ORDER BY r.updated_at DESC`).all();
+      const identities = q.identities.all().map(i => ({
+        name: i.name, lastSeen: i.last_seen,
+        rooms: db.prepare('SELECT COUNT(*) AS n FROM members WHERE name = ?').get(i.name).n
+      }));
+      return send(res, 200, { rooms, identities });
+    }
+
+    if (parts[2] === 'room' && parts[3] && method === 'DELETE') {
+      const roomId = str(parts[3], 16);
+      need(!!q.room.get(roomId), 404, '房间不存在');
+      db.prepare('DELETE FROM thoughts WHERE room_id = ?').run(roomId);
+      db.prepare('DELETE FROM members WHERE room_id = ?').run(roomId);
+      db.prepare('DELETE FROM rooms WHERE id = ?').run(roomId);
+      return send(res, 200, { ok: true });
+    }
+
+    if (parts[2] === 'identity' && parts[3] && method === 'DELETE') {
+      const name = decodeURIComponent(parts[3]);
+      db.prepare('DELETE FROM members WHERE name = ?').run(name);
+      q.deleteIdentity.run(name);
+      return send(res, 200, { ok: true });
+    }
+
+    if (parts[2] === 'cleanup' && method === 'POST') {
+      const orphanMembers = db.prepare('DELETE FROM members WHERE name NOT IN (SELECT name FROM identities)').run();
+      const idleIdentities = db.prepare('DELETE FROM identities WHERE name NOT IN (SELECT name FROM members)').run();
+      return send(res, 200, {
+        removedMembers: Number(orphanMembers.changes || 0),
+        removedIdentities: Number(idleIdentities.changes || 0)
+      });
+    }
+
+    throw Object.assign(new Error('未知管理接口'), { status: 404 });
   }
 
   if (parts[1] === 'room' && !parts[2]) {
@@ -465,7 +577,8 @@ const MIME = {
 };
 
 async function serveStatic(req, res, pathname) {
-  const rel = pathname === '/' ? '/index.html' : pathname;
+  let rel = pathname === '/' ? '/index.html' : pathname;
+  if (rel === '/admin' || rel === '/admin/') rel = '/admin.html';
   const file = path.join(ROOT, path.normalize(rel).replace(/^(\.\.[/\\])+/, ''));
   if (!file.startsWith(ROOT)) return send(res, 403, { error: 'forbidden' });
   if (path.basename(file) === 'server.js' || file.includes(path.sep + 'data' + path.sep)

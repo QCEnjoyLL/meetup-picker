@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>聚一聚 · 管理</title>
+<style>
+  :root{--paper:#FAF7F2;--card:#fff;--ink:#1A1613;--ink2:#4F4842;--ink3:#8C8378;--ink4:#B4ABA0;--line:#E8E1D6;--line2:#F1ECE3;--accent:#C4432A;--accent-soft:#F7E5DF}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--paper);color:var(--ink);font:14px/1.65 "PingFang SC","Microsoft YaHei",system-ui,sans-serif}
+  .wrap{max-width:960px;margin:0 auto;padding:28px 18px 60px}
+  h1{font-size:22px;font-weight:650;letter-spacing:-.01em;margin:0 0 4px}
+  .sub{color:var(--ink3);font-size:13px;margin-bottom:20px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px;margin-bottom:16px;box-shadow:0 10px 30px -18px rgba(0,0,0,.2)}
+  .row{display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap}
+  label{display:flex;flex-direction:column;gap:5px;font-size:12px;color:var(--ink3)}
+  input{height:38px;border:1px solid var(--line);border-radius:8px;padding:0 12px;font:inherit;background:#FDFCFA;outline:none}
+  input:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+  button{height:38px;border:1px solid var(--line);border-radius:8px;background:#fff;padding:0 14px;font:inherit;cursor:pointer;color:var(--ink)}
+  button:hover{border-color:var(--ink4)}
+  button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+  button.sm{height:30px;padding:0 10px;font-size:12px;border-radius:6px}
+  button.danger{color:var(--accent)}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th,td{text-align:left;padding:9px 8px;border-bottom:1px solid var(--line2)}
+  th{font-size:11.5px;color:var(--ink3);font-weight:500;letter-spacing:.03em}
+  code{font-family:ui-monospace,Consolas,monospace;font-size:12px}
+  .muted{color:var(--ink3);font-size:12px}
+  .msg{font-size:12.5px;color:var(--accent);min-height:18px}
+  .tabs{display:flex;gap:8px;margin-bottom:12px}
+  .tabs button.on{background:var(--ink);border-color:var(--ink);color:#fff}
+  .hidden{display:none}
+  .empty{padding:18px 8px;color:var(--ink3);font-size:13px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>聚一聚 · 管理</h1>
+  <div class="sub">需要服务端启动时设置 ADMIN_TOKEN</div>
+
+  <div class="card">
+    <div class="row">
+      <label style="flex:1">管理员口令
+        <input id="token" type="password" placeholder="ADMIN_TOKEN" autocomplete="off">
+      </label>
+      <button class="primary" id="load">连接</button>
+      <button id="cleanup">清理孤立数据</button>
+    </div>
+    <div class="msg" id="msg"></div>
+  </div>
+
+  <div class="card">
+    <div class="tabs">
+      <button id="tabRooms" class="on">房间</button>
+      <button id="tabIdentities">身份</button>
+      <span class="muted" id="stats" style="margin-left:auto;align-self:center"></span>
+    </div>
+    <div id="roomsBox"><div class="empty">点「连接」加载</div></div>
+    <div id="identitiesBox" class="hidden"><div class="empty">点「连接」加载</div></div>
+  </div>
+</div>
+<script>
+(function () {
+  var el = function (id) { return document.getElementById(id); };
+  var token = localStorage.getItem('juyiju.admin') || '';
+  el('token').value = token;
+  var data = { rooms: [], identities: [] };
+
+  function api(method, path, body) {
+    return fetch(path, {
+      method: method,
+      headers: Object.assign({ 'x-admin-token': token }, body ? { 'Content-Type': 'application/json' } : {}),
+      body: body ? JSON.stringify(body) : undefined
+    }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, status: r.status, data: j }; }); });
+  }
+  function msg(t) { el('msg').textContent = t || ''; }
+  function fmt(ts) {
+    if (!ts) return '—';
+    var d = new Date(ts), p = function (n) { return n < 10 ? '0' + n : n; };
+    return (d.getMonth() + 1) + '-' + d.getDate() + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
+  }
+
+  function renderRooms() {
+    if (!data.rooms.length) { el('roomsBox').innerHTML = '<div class="empty">还没有房间</div>'; return; }
+    el('roomsBox').innerHTML = '<table><thead><tr><th>房间号</th><th>群名</th><th>人数</th><th>最后活动</th><th></th></tr></thead><tbody>' +
+      data.rooms.map(function (r) {
+        return '<tr><td><code>' + r.id + '</code></td><td>' + esc(r.title) + '</td><td>' + r.members + '</td><td class="muted">' + fmt(r.updated_at) + '</td>' +
+          '<td><button class="sm danger" data-del-room="' + r.id + '">删除房间</button></td></tr>';
+      }).join('') + '</tbody></table>';
+  }
+  function renderIdentities() {
+    if (!data.identities.length) { el('identitiesBox').innerHTML = '<div class="empty">还没有身份</div>'; return; }
+    el('identitiesBox').innerHTML = '<table><thead><tr><th>昵称</th><th>加入房间数</th><th>最后登录</th><th></th></tr></thead><tbody>' +
+      data.identities.map(function (i) {
+        return '<tr><td>' + esc(i.name) + '</td><td>' + i.rooms + '</td><td class="muted">' + fmt(i.lastSeen) + '</td>' +
+          '<td><button class="sm danger" data-del-id="' + encodeURIComponent(i.name) + '">删除身份</button></td></tr>';
+      }).join('') + '</tbody></table>';
+  }
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+
+  function load() {
+    token = el('token').value.trim();
+    localStorage.setItem('juyiju.admin', token);
+    msg('加载中…');
+    api('GET', '/api/admin/summary').then(function (res) {
+      if (!res.ok) { msg(res.data.error || ('加载失败 ' + res.status)); return; }
+      data = res.data;
+      msg('');
+      el('stats').textContent = data.rooms.length + ' 个房间 · ' + data.identities.length + ' 个身份';
+      renderRooms(); renderIdentities();
+    }).catch(function () { msg('连不上服务器'); });
+  }
+
+  el('load').onclick = load;
+  el('token').addEventListener('keydown', function (e) { if (e.key === 'Enter') load(); });
+  el('tabRooms').onclick = function () { el('tabRooms').classList.add('on'); el('tabIdentities').classList.remove('on'); el('roomsBox').classList.remove('hidden'); el('identitiesBox').classList.add('hidden'); };
+  el('tabIdentities').onclick = function () { el('tabIdentities').classList.add('on'); el('tabRooms').classList.remove('on'); el('identitiesBox').classList.remove('hidden'); el('roomsBox').classList.add('hidden'); };
+
+  el('roomsBox').addEventListener('click', function (e) {
+    var b = e.target.closest('[data-del-room]'); if (!b) return;
+    var id = b.dataset.delRoom;
+    if (!confirm('删除房间 ' + id + '？房间里的成员和留言会一起删掉，不可恢复。')) return;
+    api('DELETE', '/api/admin/room/' + id).then(function (res) {
+      if (!res.ok) { msg(res.data.error || '删除失败'); return; }
+      data.rooms = data.rooms.filter(function (r) { return r.id !== id; });
+      renderRooms();
+      el('stats').textContent = data.rooms.length + ' 个房间 · ' + data.identities.length + ' 个身份';
+    });
+  });
+
+  el('identitiesBox').addEventListener('click', function (e) {
+    var b = e.target.closest('[data-del-id]'); if (!b) return;
+    var name = decodeURIComponent(b.dataset.delId);
+    if (!confirm('删除身份「' + name + '」？它在所有房间里留下的资料都会被删除。')) return;
+    api('DELETE', '/api/admin/identity/' + encodeURIComponent(name)).then(function (res) {
+      if (!res.ok) { msg(res.data.error || '删除失败'); return; }
+      data.identities = data.identities.filter(function (i) { return i.name !== name; });
+      renderIdentities();
+      el('stats').textContent = data.rooms.length + ' 个房间 · ' + data.identities.length + ' 个身份';
+    });
+  });
+
+  el('cleanup').onclick = function () {
+    if (!confirm('清理孤立数据？\n会删掉「没有身份对应的成员」和「没有任何成员的身份」。')) return;
+    api('POST', '/api/admin/cleanup').then(function (res) {
+      if (!res.ok) { msg(res.data.error || '清理失败'); return; }
+      msg('清理完成：成员 ' + res.data.removedMembers + ' 条，身份 ' + res.data.removedIdentities + ' 个');
+      load();
+    });
+  };
+})();
+</script>
+</body>
+</html>

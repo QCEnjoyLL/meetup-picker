@@ -1,4 +1,4 @@
-﻿services:
+services:
   meetup:
     # GitHub Actions 自动构建的镜像，amd64 / arm64 都有
     image: ghcr.io/qcenjoyll/meetup-picker:latest
@@ -10,6 +10,8 @@
       TZ: Asia/Shanghai
       PORT: "8080"
       DB_PATH: /data/meetup.db
+      # 管理员口令：启动前 export ADMIN_TOKEN=xxx，或用同目录 .env 文件
+      ADMIN_TOKEN: ${ADMIN_TOKEN:-}
     volumes:
       # SQLite 落在宿主机 ./data/meetup.db，整个目录拷走就是备份
       - ./data:/data

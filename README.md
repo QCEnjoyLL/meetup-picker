@@ -1,4 +1,4 @@
-﻿<div align="center">
+<div align="center">
 
 # 聚一聚
 
@@ -52,8 +52,8 @@
 
 身份码是每个人自己的简单密码，4~12 位字母或数字。
 
-- 第一次用某个昵称登录时，输入的码即成为该昵称的密码。
-- 之后用同一昵称登录，身份码必须一致，否则拒绝。
+- 身份是**全局**的：第一次用某个昵称登录时，输入的码即成为该昵称的密码；之后在**任何房间**用同一昵称都必须用同一个身份码。
+- 没带邀请链接时，可以在登录卡片里填房间号进入；也可以点「用这个身份查我加入过的房间」，验证后列出该身份加入过的所有房间，一键进入或退出。
 - 服务端只保存 scrypt 派生值与盐，不保存明文。
 - 同一昵称连续输错 10 次后锁定 5 分钟。
 - 忘记身份码只能换昵称，目前没有找回入口。
@@ -89,6 +89,7 @@ docker run -d \
   -e TZ=Asia/Shanghai \
   -e PORT=8080 \
   -e DB_PATH=/data/meetup.db \
+  -e ADMIN_TOKEN=换成你自己的口令 \
   -v "$PWD/data:/data" \
   ghcr.io/qcenjoyll/meetup-picker:latest
 ```
@@ -103,6 +104,7 @@ docker run -d --name meetup-picker --restart unless-stopped `
   -e TZ=Asia/Shanghai `
   -e PORT=8080 `
   -e DB_PATH=/data/meetup.db `
+  -e ADMIN_TOKEN=换成你自己的口令 `
   -v "${PWD}/data:/data" `
   ghcr.io/qcenjoyll/meetup-picker:latest
 ```
@@ -161,6 +163,25 @@ docker compose start
 ```
 
 使用 `docker run` 启动时同理，数据在挂载出来的 `./data` 目录，直接拷贝即可。
+
+## 管理员
+
+服务端启动时设置环境变量 `ADMIN_TOKEN`，否则管理接口关闭：
+
+```bash
+ADMIN_TOKEN=你的口令 docker compose up -d
+# 或在同目录 .env 里写 ADMIN_TOKEN=你的口令
+```
+
+访问 `/admin`，输入口令后可以：
+
+- 查看所有房间（房间号、群名、人数、最后活动）并删除整个房间
+- 查看所有身份（昵称、加入过几个房间、最后登录）并删除身份及其在各房间的资料
+- 一键「清理孤立数据」：删除没有身份对应的成员、以及没有任何成员的身份
+
+```text
+http://服务器IP:8080/admin
+```
 
 ## 公网部署
 
@@ -229,6 +250,11 @@ git push origin v1.0.0
 | POST / DELETE | `/api/room/:id/thought` | 发布留言 / 删除自己的留言 |
 | PUT | `/api/room/:id/meta` | 修改群名与预期人数 |
 | GET | `/api/room/:id/stream?token=` | SSE 实时推送 |
+| POST | `/api/identity/rooms` | `{name, code}` 校验身份后列出加入过的房间 |
+| POST | `/api/identity/leave` | `{name, code, room}` 退出某个房间（删除资料） |
+| GET | `/api/admin/summary` | 管理汇总（需 `ADMIN_TOKEN`） |
+| DELETE | `/api/admin/room/:id` / `/api/admin/identity/:name` | 删除房间 / 删除身份 |
+| POST | `/api/admin/cleanup` | 清理孤立数据 |
 
 城市库在 `index.html` 的 `CITY_RAW` 中，格式为 `城市|省|纬度|经度|枢纽等级|最佳季节|景点分|标签|景点`。非候选城市只需前 5 项。
 
