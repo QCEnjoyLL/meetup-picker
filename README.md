@@ -31,7 +31,7 @@
 镜像由 GitHub Actions 自动构建（amd64 + arm64）：
 
 ```bash
-docker compose up -d          # 拉 ghcr.io/qqreugpnk/meetup-picker:latest
+docker compose up -d          # 拉 ghcr.io/qcenjoyll/meetup-picker:latest
 docker compose logs -f
 ```
 

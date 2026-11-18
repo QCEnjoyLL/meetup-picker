@@ -81,11 +81,19 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: 计算小写镜像名
+        id: img
+        run: |
+          # GHCR 的 namespace 必须是小写的 github 账号名，现算避免手写错
+          OWNER=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')
+          echo "name=ghcr.io/${OWNER}/meetup-picker" >> "$GITHUB_OUTPUT"
+          echo "镜像名：ghcr.io/${OWNER}/meetup-picker"
+
       - name: 生成镜像标签
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/qqreugpnk/meetup-picker
+          images: ${{ steps.img.outputs.name }}
           tags: |
             type=ref,event=branch
             type=semver,pattern={{version}}
