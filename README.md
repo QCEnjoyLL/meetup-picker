@@ -1,4 +1,4 @@
-﻿# 聚一聚 · 群聚会选址器
+# 聚一聚 · 群聚会选址器
 
 [![build](https://github.com/QCEnjoyLL/meetup-picker/actions/workflows/docker.yml/badge.svg)](https://github.com/QCEnjoyLL/meetup-picker/actions/workflows/docker.yml)
 
@@ -37,10 +37,11 @@ docker compose logs -f
 
 打开 `http://服务器IP:8080` → 填昵称和身份码 → 「还没有房间，帮我建一个」→ 把地址发到群里。
 
-> **首次使用**：仓库的 Actions 需要先跑成功一次，GHCR 里才会有镜像。
-> 另外 GHCR 的包默认是私有的——如果部署时 `docker compose` 拉取报 `unauthorized`，去
-> `https://github.com/users/QCEnjoyLL/packages/container/meetup-picker/settings` 把可见性改成 Public，
-> 或者先 `docker login ghcr.io -u QCEnjoyLL -p <你的 PAT>`。
+> **镜像状态**：已实测可匿名拉取（包是 public），标签有 `latest`、`main`、`sha-xxxxxxxx`，
+> 平台 `linux/amd64` + `linux/arm64`（群晖/树莓派/arm 云主机都能跑）。
+> 如果以后把包改成私有，部署前先 `docker login ghcr.io -u <账号> -p <PAT>`；
+> 包设置页：`https://github.com/users/QCEnjoyLL/packages/container/meetup-picker/settings`
+> 镜像名里的 namespace 由 CI 用 `github.repository_owner` 转小写现算，改账号/转组织都不用动 workflow。
 
 不想等 CI、自己构建：
 
