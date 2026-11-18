@@ -300,6 +300,10 @@
   }
   .rchip:hover{border-color:var(--ink4);background:#fff}
   .rchip b{font-family:var(--mono);font-weight:600;letter-spacing:.04em}
+  .copyid{cursor:pointer;border-bottom:1px dashed var(--ink4);transition:color .12s,border-color .12s}
+  .copyid:hover{color:var(--accent);border-bottom-color:var(--accent)}
+  .linkbtn{background:none;border:0;padding:0;font:inherit;font-size:12px;color:var(--ink3);cursor:pointer;text-decoration:underline}
+  .linkbtn:hover{color:var(--accent)}
   .rchip .nm{color:var(--ink2);max-width:7em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .rchip .x{border:0;background:none;color:var(--ink4);cursor:pointer;font:inherit;font-size:15px;line-height:1;padding:0 5px;border-radius:6px}
   .rchip .x:hover{color:var(--accent);background:var(--accent-soft)}
@@ -402,7 +406,7 @@
       <span class="rb-dot" id="rbDot"></span>
       <span id="rbState">连接中…</span>
       <span class="sep">·</span>
-      <span>房间 <b id="rbId">—</b></span>
+      <span>房间 <b id="rbId" class="copyid" title="点击复制房间号">—</b></span>
       <span class="sep">·</span>
       <span id="rbOnline">0 人在线</span>
       <button id="rbInvite">复制邀请链接</button>
@@ -444,8 +448,11 @@
       </div>
 
       <div class="myrooms" id="myRooms">
-        <div class="lbl">这个身份加入过的房间 <span class="hint">先验证昵称和身份码才会列出来</span></div>
+        <div class="lbl">这个身份加入过的房间 <span class="hint">点房间号可复制</span></div>
         <div class="myrooms-list" id="myRoomsList"></div>
+      </div>
+      <div class="tiny" id="forgetRow" style="display:none;margin-top:10px">
+        <button class="linkbtn" id="btnForget">清除本机记住的身份和房间号</button>
       </div>
 
       <div class="tiny login-tip">
@@ -1592,11 +1599,12 @@ function computeStats(members) {
     if (msg) $('loginErr').textContent = msg;
     setTimeout(function () { try { $('loginName').focus(); } catch (e) { } }, 60);
   }
-  function enterRoom(roomPayload, meId, meName, token) {
+  function enterRoom(roomPayload, meId, meName, token, code) {
     R.token = token;
     R.meId = meId;
     R.meName = meName;
     try { localStorage.setItem(TK + R.room, token); } catch (e) { }
+    rememberRecent(R.room, meName, code || ($('loginCode').value || '').trim(), roomPayload && roomPayload.title);
     document.body.classList.remove('loggedout');
     document.body.classList.add('inroom');
     $('roomBar').classList.add('show');
@@ -1620,6 +1628,37 @@ function computeStats(members) {
     showLogin('身份已失效，请重新进入房间');
   }
 
+  /* ---------- 本机记住的上次身份与房间 ---------- */
+  var RC = 'wtdoyo.recent';
+  function loadRecent() {
+    try {
+      var r = JSON.parse(localStorage.getItem(RC) || 'null');
+      return r && r.room ? r : null;
+    } catch (e) { return null; }
+  }
+  function rememberRecent(room, name, code, title) {
+    var prev = loadRecent() || {};
+    try {
+      localStorage.setItem(RC, JSON.stringify({
+        room: room,
+        name: name || prev.name || '',
+        code: code || prev.code || '',
+        title: title || prev.title || '',
+        ts: Date.now()
+      }));
+    } catch (e) { }
+  }
+  function clearRecent() { try { localStorage.removeItem(RC); } catch (e) { } }
+  function applyRecent() {
+    var r = loadRecent();
+    if (!r) { $('forgetRow').style.display = 'none'; return; }
+    if (!$('loginName').value) $('loginName').value = r.name || '';
+    if (!$('loginCode').value) $('loginCode').value = r.code || '';
+    if (!$('loginRoom').value) $('loginRoom').value = r.room || '';
+    $('forgetRow').style.display = '';
+    updateLoginUI();
+  }
+
   /* ---------- 身份校验后的房间列表（服务端返回） ---------- */
   var myRoomList = [];
   function forgetRoom(room) {
@@ -1636,7 +1675,7 @@ function computeStats(members) {
     box.classList.add('show');
     $('myRoomsList').innerHTML = myRoomList.map(function (r) {
       return '<span class="rchip">' +
-        '<b>' + esc(r.id) + '</b>' +
+        '<b class="copyid" data-copy="' + esc(r.id) + '" title="点击复制房间号">' + esc(r.id) + '</b>' +
         (r.title ? '<span class="nm">' + esc(r.title) + '</span>' : '') +
         '<button class="go" data-enter="' + esc(r.id) + '">进入</button>' +
         '<button class="x" data-leave="' + esc(r.id) + '" title="退出并删除我在该房间的资料">×</button></span>';
@@ -1795,9 +1834,11 @@ function computeStats(members) {
     state.members = []; state.group = '我们的群'; state.expected = 15;
     $('roomBar').classList.remove('show');
     $('thoughtCard').style.display = 'none';
-    $('loginRoom').value = '';
-    $('loginName').value = '';
-    $('loginCode').value = '';
+    var rec = loadRecent();
+    $('loginRoom').value = rec ? rec.room : '';
+    $('loginName').value = rec ? (rec.name || '') : '';
+    $('loginCode').value = rec ? (rec.code || '') : '';
+    $('forgetRow').style.display = rec ? '' : 'none';
     $('loginErr').textContent = '';
     var u = new URL(location.href);
     u.searchParams.delete('r');
@@ -1852,10 +1893,24 @@ function computeStats(members) {
     $('loginName').addEventListener('input', function () { $('myRooms').classList.remove('show'); });
     $('loginCode').addEventListener('input', function () { $('myRooms').classList.remove('show'); });
     $('myRoomsList').addEventListener('click', function (e) {
+      var copy = e.target.closest('[data-copy]');
+      if (copy) { copyText(copy.dataset.copy, '房间号已复制'); return; }
       var enter = e.target.closest('[data-enter]');
       if (enter) { enterKnown(enter.dataset.enter); return; }
       var leave = e.target.closest('[data-leave]');
       if (leave) { leaveKnown(leave.dataset.leave); return; }
+    });
+    $('rbId').addEventListener('click', function () { if (R.room) copyText(R.room, '房间号已复制'); });
+    $('btnForget').addEventListener('click', function () {
+      if (!confirm('清除本机记住的昵称、身份码和房间号？\n只是这台设备不再自动填，房间里的资料不受影响。')) return;
+      clearRecent();
+      $('loginName').value = '';
+      $('loginCode').value = '';
+      $('loginRoom').value = '';
+      $('forgetRow').style.display = 'none';
+      $('myRooms').classList.remove('show');
+      updateLoginUI();
+      toast('已清除本机记录');
     });
 
     $('btnSave').addEventListener('click', function () {
@@ -1890,6 +1945,7 @@ function computeStats(members) {
       api('DELETE', '/api/room/' + R.room + '/member', { token: R.token }).then(function (res) {
         if (!res.ok) { toast(res.data.error || '删不掉'); return; }
         forgetRoom(R.room);
+        clearRecent();
         if (R.es) { try { R.es.close(); } catch (e) { } }
         R.token = ''; R.meId = '';
         document.body.classList.add('loggedout');
@@ -2062,7 +2118,7 @@ function computeStats(members) {
     if (room) R.room = room;
     updateLoginUI();
     if (room) tryResume(room);
-    else showLogin('');
+    else { applyRecent(); showLogin(''); }
   }
 
   boot();
