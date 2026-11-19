@@ -76,6 +76,13 @@
   .sec-h h2::before{content:"";width:4px;height:14px;border-radius:2px;background:var(--accent);display:block;flex:none}
   .sec-h .note{font-size:12px;color:var(--ink3);text-align:right}
   .rankact{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+  .seg{display:inline-flex;border:1px solid var(--line);border-radius:999px;padding:3px;background:#FDFCFA;margin:2px 0 14px}
+  .seg button{
+    border:0;background:none;font:inherit;font-size:12.5px;color:var(--ink2);cursor:pointer;
+    padding:5px 14px;border-radius:999px;line-height:1.2;transition:background .12s,color .12s
+  }
+  .seg button:hover{color:var(--ink)}
+  .seg button.on{background:var(--ink);color:#fff}
 
   /* ---------- 表单 ---------- */
   .field{margin-bottom:15px}
@@ -597,12 +604,16 @@
 
       <section class="card">
         <div class="sec-h">
-          <h2>折中推荐榜</h2>
+          <h2>推荐榜</h2>
           <div class="rankact">
-            <span class="note">距离 40% · 得票 28% · 景点 16% · 可达率 16%</span>
+            <span class="note" id="rankNote">距离 40% · 得票 28% · 景点 16% · 可达率 16%</span>
             <button class="sm ghost" id="btnCopyResult">复制榜单</button>
             <button class="sm ghost" id="btnCopyAI">复制给 AI</button>
           </div>
+        </div>
+        <div class="seg" id="rankTabs">
+          <button data-mode="score" class="on">综合折中</button>
+          <button data-mode="geo">地理重心</button>
         </div>
         <div id="rank"></div>
       </section>
@@ -1147,11 +1158,19 @@ function computeStats(members) {
     r.distS = distS;
   });
   rows.sort(function (a, b) { return b.score - a.score; });
+  var center = centerOf(ms);
+  var maxCenterD = 1;
+  var geo = rows.map(function (r) {
+    r.centerD = center ? distKm(center, r.city) : 0;
+    if (r.centerD > maxCenterD) maxCenterD = r.centerD;
+    return r;
+  }).sort(function (a, b) { return a.centerD - b.centerD; });
   return {
-    rows: rows, ms: ms,
-    center: centerOf(ms),
+    rows: rows, geo: geo, maxCenterD: maxCenterD, ms: ms,
+    center: center,
     months: monthCounts(ms),
-    best: rows[0] || null
+    best: rows[0] || null,
+    geoBest: geo[0] || null
   };
 }
 
@@ -1521,29 +1540,49 @@ function computeStats(members) {
     else if (r.city.scenic >= 4) p.push('玩的东西够两天');
     return p.join('；');
   }
+  var rankMode = 'score';
+  var lastStats = null;
+
+  function geoReason(r) {
+    if (r.n === 0) return '还没有人录入';
+    var p = ['离大家的地理重心 ' + Math.round(r.centerD) + ' km'];
+    p.push(r.full ? '所有人都能在时限内到达' : r.reach + '/' + r.n + ' 人可达');
+    if (r.votes) p.push(r.votes + ' 人点名想去');
+    return p.join('；');
+  }
+
   function renderRank(st) {
+    lastStats = st;
     var wrap = $('rank');
+    var isGeo = rankMode === 'geo';
     if (!st.ms.length) {
       wrap.innerHTML = '<div class="empty">还没有数据。等几个人填完，这里会自动排序。</div>';
+      $('rankNote').textContent = '距离 40% · 得票 28% · 景点 16% · 可达率 16%';
       return;
     }
-    wrap.innerHTML = st.rows.slice(0, 6).map(function (r, i) {
+    var list = isGeo ? st.geo : st.rows;
+    $('rankNote').textContent = isGeo
+      ? '纯地理：离大家重心的直线距离'
+      : '距离 40% · 得票 28% · 景点 16% · 可达率 16%';
+    wrap.innerHTML = list.slice(0, 6).map(function (r, i) {
+      var bar = isGeo ? (100 * (1 - r.centerD / (st.maxCenterD || 1))) : r.score;
       return '<div class="rk' + (i === 0 ? ' top1' : '') + '">' +
         '<div class="rk-no">' + (i + 1 < 10 ? '0' : '') + (i + 1) + '</div>' +
         '<div>' +
         '<div class="rk-name"><h3>' + esc(r.city.name) + '</h3><span class="prov">' + esc(r.city.prov) + '</span>' +
         (r.full ? '<span class="badge gold">全员可达</span>' : '') +
         (r.votes >= 2 ? '<span class="badge teal">' + r.votes + ' 票</span>' : '') +
+        (isGeo && i === 0 ? '<span class="badge gold">重心最近</span>' : '') +
         '</div>' +
         '<div class="rk-meta"><span><b>' + fmtKm(r.avgD) + '</b> km 平均</span>' +
         '<span><b>' + r.avgH.toFixed(1) + '</b> h 车程</span>' +
         '<span><b>' + r.reach + '</b>/' + r.n + ' 可达</span>' +
         '<span>季节：' + esc(r.city.season || '全年') + '</span></div>' +
         '<div class="rk-sights">' + r.city.sights.slice(0, 4).map(function (s) { return '<span>' + esc(s) + '</span>'; }).join('') + '</div>' +
-        '<div class="rk-foot">' + esc(reason(r)) + '</div>' +
-        '<div class="bar"><i style="width:' + r.score.toFixed(1) + '%"></i></div>' +
+        '<div class="rk-foot">' + esc(isGeo ? geoReason(r) : reason(r)) + '</div>' +
+        '<div class="bar"><i style="width:' + Math.max(2, Math.min(100, bar)).toFixed(1) + '%"></i></div>' +
         '</div>' +
-        '<div class="rk-score">' + r.score.toFixed(0) + '<small>综合分</small></div>' +
+        '<div class="rk-score">' + (isGeo ? Math.round(r.centerD) : Math.round(r.score)) + '<small>' + (isGeo ? '距重心 km' : '综合分') + '</small></div>' +
         '</div>';
     }).join('');
   }
@@ -1707,6 +1746,9 @@ function computeStats(members) {
       L.push('   值得去：' + r.city.sights.join('、'));
     });
     L.push('');
+    L.push('（另一视角）离大家地理重心最近的候选城市：' +
+      st.geo.slice(0, 5).map(function (r) { return r.city.name + '（' + Math.round(r.centerD) + ' km）'; }).join('、'));
+    L.push('');
     L.push('三、月份分布');
     var arr = [];
     for (var i = 1; i <= 12; i++) if (st.months[i]) arr.push(i + ' 月 ' + st.months[i] + ' 人');
@@ -1752,9 +1794,13 @@ function computeStats(members) {
     }
 
     if (st.center) {
-      var near = nearestCity(st.center);
-      $('hCenter').textContent = near.city ? near.city.name : '—';
-      $('hCenterMeta').textContent = '离重心最近 · ' + fmtKm(near.km) + ' km';
+      if (st.geoBest) {
+        $('hCenter').textContent = st.geoBest.city.name;
+        $('hCenterMeta').textContent = '离重心 ' + fmtKm(st.geoBest.centerD) + ' km（候选里最近）';
+      } else {
+        $('hCenter').textContent = '—';
+        $('hCenterMeta').textContent = '所有点位的中心';
+      }
     } else {
       $('hCenter').textContent = '—';
       $('hCenterMeta').textContent = '所有点位的中心';
@@ -2215,9 +2261,12 @@ function computeStats(members) {
     $('btnCopyResult').addEventListener('click', function () {
       var st = computeStats(state.members);
       if (!st.ms.length) { toast('还没有人填'); return; }
-      var lines = ['【' + state.group + '】聚会地点推荐（' + st.ms.length + ' 人参与）', ''];
-      st.rows.slice(0, 6).forEach(function (r, i) {
-        lines.push((i + 1) + '. ' + r.city.name + '（' + r.city.prov + '）综合 ' + r.score.toFixed(0) + ' 分');
+      var isGeo = rankMode === 'geo';
+      var list = isGeo ? st.geo : st.rows;
+      var lines = [isGeo ? '【' + state.group + '】地理重心最近的候选城市（' + st.ms.length + ' 人参与）'
+        : '【' + state.group + '】聚会地点推荐（' + st.ms.length + ' 人参与）', ''];
+      list.slice(0, 6).forEach(function (r, i) {
+        lines.push((i + 1) + '. ' + r.city.name + '（' + r.city.prov + '）' + (isGeo ? '距重心 ' + Math.round(r.centerD) + ' km' : '综合 ' + r.score.toFixed(0) + ' 分'));
         lines.push('   平均 ' + Math.round(r.avgD) + 'km / ' + r.avgH.toFixed(1) + 'h，' + r.reach + '/' + r.n + ' 人可达' + (r.votes ? '，' + r.votes + ' 票' : ''));
         lines.push('   玩：' + r.city.sights.slice(0, 4).join('、'));
       });
@@ -2226,7 +2275,14 @@ function computeStats(members) {
       for (var j = 1; j <= 12; j++) if (mc[j] === mx && mx > 0) bm.push(j + '月');
       if (mx > 0) lines.push('', '最佳月份：' + bm.join('、') + '（' + mx + ' 人能来）');
       lines.push('', '房间：' + location.origin + location.pathname + '?r=' + R.room);
-      copyText(lines.join('\n'), '推荐榜已复制，直接粘群里');
+      copyText(lines.join('\n'), isGeo ? '地理重心榜已复制' : '推荐榜已复制，直接粘群里');
+    });
+    $('rankTabs').addEventListener('click', function (e) {
+      var b = e.target.closest('[data-mode]');
+      if (!b || rankMode === b.dataset.mode) return;
+      rankMode = b.dataset.mode;
+      Array.prototype.forEach.call(this.children, function (n) { n.classList.toggle('on', n === b); });
+      if (lastStats) renderRank(lastStats);
     });
     $('btnCopyAI').addEventListener('click', function () {
       var text = buildAIPrompt();
