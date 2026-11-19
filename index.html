@@ -200,6 +200,7 @@
   .mrow .loc{color:var(--ink3);font-size:12.2px;margin-left:6px}
   .mrow .tags{display:flex;gap:5px;flex-wrap:wrap;margin-top:5px}
   .mrow .tags span{font-size:11px;background:#F7F4EE;color:var(--ink3);border-radius:4px;padding:1px 6px}
+  .mrow .tags span.geo{background:#E9F2EF;color:#2C6E63}
   .mrow .del{background:none;border:0;color:var(--ink4);cursor:pointer;padding:2px 6px;font-size:16px;line-height:1;border-radius:6px}
   .mrow .del:hover{color:var(--accent);background:var(--accent-soft)}
   .empty{text-align:center;color:var(--ink3);font-size:13px;padding:26px 10px;line-height:1.8}
@@ -554,6 +555,10 @@
         <div class="btnrow">
           <button class="primary wide" id="btnSave">保存我这行</button>
         </div>
+        <div class="btnrow" style="margin-top:8px">
+          <button class="ghost wide" id="btnQuit">退出参与</button>
+        </div>
+        <div class="tiny" style="margin-top:8px">退出参与会删掉你在这个房间填的资料，房间本身还在。</div>
       </section>
 
       <section class="card need-room">
@@ -1613,14 +1618,17 @@ function computeStats(members) {
       $('members').innerHTML = '<div class="empty">房间里还没有人。把邀请链接发到群里。</div>';
       return;
     }
-    var top = st.best;
+    var top = st.best, geoTop = st.geo && st.geo[0];
     $('members').innerHTML = ms.map(function (m) {
       var c = CITY[m.city];
-      var tags = [];
+      var tags = [], geoTags = [];
       tags.push(m.maxHours ? m.maxHours + 'h 内' : '时间不限');
       if (m.budget) tags.push('≤' + m.budget);
       if ((m.months || []).length) tags.push(m.months.join('/') + '月');
       if (top && c) tags.push('到' + top.city.name + ' ' + (Math.round(travelHours(c, top.city) * 10) / 10) + 'h');
+      if (geoTop && c && (!top || geoTop.city.name !== top.city.name)) {
+        geoTags.push('重心 ' + geoTop.city.name + ' ' + (Math.round(travelHours(c, geoTop.city) * 10) / 10) + 'h');
+      }
       var dests = (m.dests || []).length ? '想去：' + m.dests.join('、') : '';
       var me = m.id === R.meId;
       return '<div class="mrow">' + avatarHtml(m, 30) +
@@ -1629,10 +1637,11 @@ function computeStats(members) {
         (me ? '<span class="me-tag">我</span>' : '') +
         (m.online ? '<span class="online-dot" title="在线"></span>' : '') +
         '<span class="loc">' + esc(m.city || '没填城市') + '</span>' +
-        '<div class="tags">' + tags.map(function (t) { return '<span>' + esc(t) + '</span>'; }).join('') + '</div>' +
+        '<div class="tags">' + tags.map(function (t) { return '<span>' + esc(t) + '</span>'; }).join('') +
+        geoTags.map(function (t) { return '<span class="geo">' + esc(t) + '</span>'; }).join('') + '</div>' +
         (dests ? '<div class="tags"><span>' + esc(dests) + '</span></div>' : '') +
         '</div>' +
-        '<button class="del" data-del="' + esc(m.id) + '" title="' + (me ? '退出房间' : '') + '"' + (me ? '' : ' disabled') + '>' + (me ? '×' : '') + '</button>' +
+        '<button class="del" data-del="' + esc(m.id) + '" title="' + (me ? '退出参与' : '') + '"' + (me ? '' : ' disabled') + '>' + (me ? '×' : '') + '</button>' +
         '</div>';
     }).join('');
   }
@@ -2122,6 +2131,23 @@ function computeStats(members) {
     }).catch(function () { toast('连不上服务器，检查一下地址'); });
   }
 
+  function quitParticipate() {
+    if (!confirm('退出参与？\n你在这个房间填的城市、时间、想去的地方都会删掉，其他人就看不到你了。\n房间本身还在，之后还可以再进来。')) return;
+    api('DELETE', '/api/room/' + R.room + '/member', { token: R.token }).then(function (res) {
+      if (!res.ok) { toast(res.data.error || '删不掉'); return; }
+      forgetRoom(R.room);
+      clearRecent();
+      if (R.es) { try { R.es.close(); } catch (e) { } R.es = null; }
+      R.token = ''; R.meId = '';
+      document.body.classList.add('loggedout');
+      $('roomBar').classList.remove('show');
+      $('thoughtCard').style.display = 'none';
+      $('loginRoom').value = '';
+      showLogin('已退出参与，你填的资料已删除');
+      updateLoginUI();
+    }).catch(function () { toast('网络不给力，再试一次'); });
+  }
+
   function leaveRoom() {
     if (R.es) { try { R.es.close(); } catch (e) { } R.es = null; }
     if (R.poll) { clearInterval(R.poll); R.poll = null; }
@@ -2233,23 +2259,11 @@ function computeStats(members) {
       }).catch(function () { toast('网络不给力，再试一次'); });
     });
 
+    $('btnQuit').addEventListener('click', quitParticipate);
     $('members').addEventListener('click', function (e) {
       var el = e.target.closest('[data-del]'); if (!el) return;
       if (el.dataset.del !== R.meId) return;
-      if (!confirm('退出房间？你的那条会从房间删掉。')) return;
-      api('DELETE', '/api/room/' + R.room + '/member', { token: R.token }).then(function (res) {
-        if (!res.ok) { toast(res.data.error || '删不掉'); return; }
-        forgetRoom(R.room);
-        clearRecent();
-        if (R.es) { try { R.es.close(); } catch (e) { } }
-        R.token = ''; R.meId = '';
-        document.body.classList.add('loggedout');
-        $('roomBar').classList.remove('show');
-        $('thoughtCard').style.display = 'none';
-        $('loginRoom').value = '';
-        showLogin('已退出房间，资料也从房间里删掉了');
-        updateLoginUI();
-      });
+      quitParticipate();
     });
 
     $('rbInvite').addEventListener('click', function () {
